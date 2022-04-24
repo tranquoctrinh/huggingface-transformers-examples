@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--num_beams", type=int, default=4, help="Beam size.")
     parser.add_argument("--fp16", default=False, action="store_true", help="Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit")
     parser.add_argument("--overwrite_output_dir", default=False, action="store_true", help="Overwrite the content of the output directory")
-    parser.add_argument("--early_stopping_patience", type=int, default=20000, help="Early stopping patience.")
+    parser.add_argument("--early_stopping_patience", type=int, default=10, help="Early stopping patience.")
     # For debugging
     parser.add_argument("--max_train_samples", type=int, default=None, help="Maximum number of training samples to use.")
     parser.add_argument("--max_eval_samples", type=int, default=None, help="Maximum number of evaluation samples to use.")

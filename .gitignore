@@ -127,3 +127,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+wandb/
+seq2seq/dnn_dailymail_t5_base_output/
+text_classification/imdb_classification
+website2description/
