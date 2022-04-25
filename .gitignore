@@ -132,3 +132,5 @@ wandb/
 seq2seq/dnn_dailymail_t5_base_output/
 text_classification/imdb_classification
 website2description/
+seq2seq/cnn_t5_base/
+text_classification/imdb_classification_bert
