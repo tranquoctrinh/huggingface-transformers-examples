@@ -10,7 +10,8 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
     set_seed,
-    EarlyStoppingCallback
+    EarlyStoppingCallback,
+    DataCollatorForSeq2Seq
 )
 from transformers.trainer_utils import get_last_checkpoint
 
@@ -192,6 +193,15 @@ def main():
         max_samples=config.max_predict_samples,
         prefix="Summary this article: ",
         split="test",
+    )
+
+    # Data collator
+    ignore_pad_token_for_loss = True
+    data_collator = DataCollatorForSeq2Seq(
+        tokenizer,
+        model=model,
+        label_pad_token_id=-100 if ignore_pad_token_for_loss else tokenizer.pad_token_id,
+        pad_to_multiple_of=8 if training_args.fp16 else None,
     )
 
     trainer = Seq2SeqTrainer(

@@ -135,6 +135,6 @@ class ClassificationDataset(dataset.Dataset):
         input_text = self.prefix + input_text
         model_inputs = self.tokenizer(input_text, max_length=self.max_length, padding=self.padding, truncation=True)
         if not self.predict:
-            model_inputs["labels"] = label
+            model_inputs["label"] = label
         return model_inputs
 ```

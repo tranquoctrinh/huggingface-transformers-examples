@@ -24,6 +24,7 @@ from transformers import (
     AutoConfig,
     PretrainedConfig,
     PreTrainedModel,
+    default_data_collator,
 )
 
 from transformers.trainer_utils import get_last_checkpoint
@@ -89,7 +90,7 @@ class ClassificationDataset(dataset.Dataset):
         input_text = self.prefix + input_text
         model_inputs = self.tokenizer(input_text, max_length=self.max_length, padding=self.padding, truncation=True)
         if not self.predict:
-            model_inputs["labels"] = label
+            model_inputs["label"] = label
         return model_inputs
 
 
@@ -103,8 +104,8 @@ class OutputCustom(ModelOutput):
 class ConfigCustom(PretrainedConfig):
     def __init__(
         self,
-        model_type: str = "bart",
-        pretrained_model: str = "facebook/bart-base",
+        model_type: str = "bert",
+        pretrained_model: str = "bert-base-uncased",
         num_labels: int = 2,
         dropout: float = 0.1,
         inner_dim: int = 1024,
@@ -117,6 +118,7 @@ class ConfigCustom(PretrainedConfig):
         self.dropout = dropout
         self.inner_dim = inner_dim
         self.max_length = max_length
+        # self.num_labels = num_labels
 
         encoder_config = AutoConfig.from_pretrained(
             self.pretrained_model,
@@ -131,6 +133,7 @@ class ModelCustom(PreTrainedModel):
 
     def __init__(self, config: ConfigCustom):
         super(ModelCustom, self).__init__(config)
+        # self.num_labels = config.num_labels
         self.config = config
         self.encoder = AutoModel.from_pretrained(self.config.pretrained_model)
         self.encoder.resize_token_embeddings(self.config.vocab_size)
@@ -158,16 +161,10 @@ class ModelCustom(PreTrainedModel):
             # labels=labels,
             return_dict=return_dict,
         )
-        hidden_states = encoded.last_hidden_state
-
-        eos_mask = input_ids.eq(self.config.eos_token_id)
-
-        encoded_rep = hidden_states[eos_mask, :].view(hidden_states.size(0), -1, hidden_states.size(-1))[:, -1, :]
-
-        x = self.dropout(encoded_rep)
-        x = torch.tanh(self.dense_1(x))
-        x = self.dropout(x)
-        logits = self.dense_2(x)
+        hidden_states = encoded.last_hidden_state[:, 0, :]
+        x = self.dropout(hidden_states)
+        x = torch.relu(self.dense_1(x))
+        logits = self.dense_2(self.dropout(x))
 
         loss = None
         if labels is not None:
@@ -178,6 +175,17 @@ class ModelCustom(PreTrainedModel):
             loss=loss,
             logits=logits
         )
+    
+    def predict(self, input_ids=None, attention_mask=None, return_dict=None, threshold=0.5, **kwargs):
+        logits = self.forward(input_ids=input_ids, attention_mask=attention_mask, return_dict=return_dict, **kwargs).logits
+        if self.config.num_labels == 2:
+            logits = torch.sigmoid(logits)
+            predict_labels = (logits > threshold).long()
+        else:
+            logits = torch.softmax(logits, dim=-1)
+            predict_labels = logits.argmax(dim=-1)
+        return predict_labels
+
 
 
 def main():
@@ -231,7 +239,7 @@ def main():
     model.label2id = label_to_id
     model.id2label = {v: k for k, v in label_to_id.items()}
 
-    tokenizer = AutoTokenizer.from_pretrained(model_config.pretrained_model)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.pretrained_model)
 
     # special_tokens = ["[language]", "[\language]", "[correct]", "[\correct]", "[problem]", "[\problem]", "[incorrect]", "[\incorrect]"]
     # tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
@@ -303,14 +311,14 @@ def main():
     eval_dataset = ClassificationDataset(
         tokenizer=tokenizer,
         max_length=config.max_length,
-        max_samples=config.max_train_samples,
+        max_samples=config.max_eval_samples,
         label_to_id=model.label2id,
         split="test",
     )
     predict_dataset = ClassificationDataset(
         tokenizer=tokenizer,
         max_length=config.max_length,
-        max_samples=config.max_train_samples,
+        max_samples=config.max_predict_samples,
         label_to_id=model.label2id,
         predict=True,
         split="test",
@@ -323,7 +331,7 @@ def main():
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=config.early_stopping_patience)]
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=config.early_stopping_patience)],
     )
     
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
