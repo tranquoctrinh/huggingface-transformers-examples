@@ -18,6 +18,18 @@ from transformers.trainer_utils import get_last_checkpoint
 logger = logging.getLogger(__name__)
 
 
+import nltk
+try:
+    nltk.data.find("tokenizers/punkt")
+except (LookupError, OSError):
+    if is_offline_mode():
+        raise LookupError(
+            "Offline mode: run this script without TRANSFORMERS_OFFLINE first to download nltk data files"
+        )
+    with FileLock(".lock") as lock:
+        nltk.download("punkt", quiet=True)
+
+
 class Seq2SeqDataset(dataset.Dataset):
     def __init__(self, path_df=None, tokenizer=None, max_source_length=512, max_target_length=256, prefix=None, 
     ignore_pad_token_for_loss=True, padding="max_length", max_samples=None, split="train"):
@@ -150,8 +162,22 @@ def main():
 
     # Metric
     rouge = load_metric("rouge")
+    bleu = load_metric("sacrebleu")
+    meteor = load_metric('meteor')
 
     def compute_metrics(eval_preds):
+        def postprocess_text(preds, labels, metric="rouge"):
+            preds = [pred.strip() for pred in preds]
+            labels = [label.strip() for label in labels]
+            if metric == "rouge":
+                # rougeLSum expects newline after each sentence
+                preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
+                labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
+            elif metric in {"sacrebleu", "meteor"}:
+                labels = [[label] for label in labels]
+            
+            return preds, labels
+
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
@@ -160,13 +186,26 @@ def main():
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
-        result = rouge.compute(predictions=decoded_preds, references=decoded_labels)
+        de_preds, de_labels = postprocess_text(decoded_preds, decoded_labels, metric="sacrebleu")
+        bleu_result = bleu.compute(predictions=de_preds, references=de_labels)
+        
+        de_preds, de_labels = postprocess_text(decoded_preds, decoded_labels, metric="meteor")
+        meteor_result = meteor.compute(predictions=de_preds, references=de_labels)
+        
+        de_preds, de_labels = postprocess_text(decoded_preds, decoded_labels, metric="rouge")
+        rouge_result = rouge.compute(predictions=de_preds, references=de_labels)
         # Extract a few results from ROUGE
-        result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
+        rouge_result = {key: round(value.mid.fmeasure * 100, 4) for key, value in rouge_result.items()}
 
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
-        result["gen_len"] = np.mean(prediction_lens)
-        result = {k: round(v, 4) for k, v in result.items()}
+
+        result = dict(
+            gen_len=np.mean(prediction_lens),
+            bleu=round(bleu_result["score"], 4),
+            meteor=round(meteor_result["meteor"]*100, 4),
+        )
+        result.update(rouge_result)
+
         return result
     
     # Load dataset
